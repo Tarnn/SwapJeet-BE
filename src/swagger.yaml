@@ -1,0 +1,520 @@
+openapi: 3.0.0
+info:
+  title: SwapJeet API
+  version: 1.0.0
+  description: |
+    API for tracking Ethereum wallet fumbles and managing leaderboards.
+    
+    ## Authentication
+    All endpoints require authentication via JWT token in a cookie named `swapjeet_token`.
+    
+    ## Rate Limiting
+    API requests are limited to 10 requests per minute per IP address.
+    
+    ## Caching
+    - Wallet details are cached for 15 minutes
+    - Leaderboard data is cached for 1 hour
+    - Transaction data is cached for 24 hours
+
+servers:
+  - url: /api
+    description: SwapJeet API endpoint
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: swapjeet_token
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code for client-side handling
+          enum: [AUTH_REQUIRED, INVALID_INPUT, NOT_FOUND, DUPLICATE, RATE_LIMITED]
+    WalletInput:
+      type: object
+      required:
+        - address
+      properties:
+        address:
+          type: string
+          pattern: ^0x[a-fA-F0-9]{40}$
+          description: Ethereum wallet address
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+        nickname:
+          type: string
+          maxLength: 20
+          description: User-defined nickname for the wallet
+          example: "My Trading Wallet"
+        tag:
+          type: string
+          enum: [Me, Whale, Friend, Other]
+          description: Category tag for the wallet
+          example: "Me"
+    WalletDetails:
+      type: object
+      properties:
+        address:
+          type: string
+          description: Ethereum wallet address
+        tokens:
+          type: array
+          items:
+            type: object
+            properties:
+              symbol:
+                type: string
+                description: Token symbol
+              balance:
+                type: string
+                description: Token balance
+              value:
+                type: number
+                description: USD value of tokens
+              price:
+                type: number
+                description: Current token price in USD
+        netWorth:
+          type: number
+          description: Total USD value of all tokens
+        topGainer:
+          type: object
+          properties:
+            symbol:
+              type: string
+              description: Token symbol
+            change24h:
+              type: number
+              description: 24-hour price change percentage
+        topLoser:
+          type: object
+          properties:
+            symbol:
+              type: string
+              description: Token symbol
+            change24h:
+              type: number
+              description: 24-hour price change percentage
+      example:
+        address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+        tokens: [
+          {
+            symbol: "ETH",
+            balance: "1.5",
+            value: 3000,
+            price: 2000
+          }
+        ]
+        netWorth: 3000
+        topGainer: { symbol: "ETH", change24h: 5.2 }
+        topLoser: { symbol: "USDT", change24h: -0.1 }
+    FumbleResult:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            type: object
+            properties:
+              token:
+                type: string
+                description: Token symbol
+              loss:
+                type: number
+                description: USD value lost
+              type:
+                type: string
+                enum: [Early, Late]
+                description: Whether sold too early or too late
+              timestamp:
+                type: string
+                format: date-time
+                description: Transaction timestamp
+              price:
+                type: number
+                description: Sale price
+              peakPrice:
+                type: number
+                description: Peak price within the analysis window
+        totalLoss:
+          type: number
+          description: Total USD value lost across all transactions
+        jeetScore:
+          type: number
+          description: Calculated score based on losses (0-100)
+      example:
+        transactions: [
+          {
+            token: "ETH",
+            loss: 1000,
+            type: "Early",
+            timestamp: "2024-03-16T12:00:00Z",
+            price: 2000,
+            peakPrice: 2500
+          }
+        ]
+        totalLoss: 1000
+        jeetScore: 75
+    UserPreferences:
+      type: object
+      properties:
+        alerts:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              description: Whether alerts are enabled
+            threshold:
+              type: number
+              description: Minimum USD value change to trigger alerts
+            email:
+              type: boolean
+              description: Whether to send email alerts
+            push:
+              type: boolean
+              description: Whether to send push notifications
+        showLeaderboard:
+          type: boolean
+          description: Whether to show user on public leaderboard
+        walletOrder:
+          type: array
+          items:
+            type: string
+          description: Custom order of wallet addresses
+        hideSmall:
+          type: boolean
+          description: Whether to hide small value tokens (<$100)
+        fumbleTheme:
+          type: string
+          enum: [default, dark, light]
+          description: Theme for fumble PNG exports
+        achievements:
+          type: object
+          properties:
+            showOnProfile:
+              type: boolean
+              description: Whether to display achievements
+            notifications:
+              type: boolean
+              description: Whether to notify on new achievements
+      example:
+        alerts:
+          enabled: true
+          threshold: 1000
+          email: true
+          push: false
+        showLeaderboard: true
+        walletOrder: ["0x123...", "0x456..."]
+        hideSmall: true
+        fumbleTheme: "dark"
+        achievements:
+          showOnProfile: true
+          notifications: true
+
+paths:
+  /wallets:
+    get:
+      summary: Get user's wallets
+      description: Returns a list of all wallets added by the user with their details
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: includeDetails
+          in: query
+          schema:
+            type: boolean
+          description: Whether to include full wallet details
+        - name: tag
+          in: query
+          schema:
+            type: string
+          description: Filter wallets by tag
+      responses:
+        '200':
+          description: List of user's wallets with details
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WalletDetails'
+        '401':
+          description: User not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Add a new wallet
+      description: Add a new wallet to track. The wallet will be verified with Zapper.fi
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletInput'
+      responses:
+        '201':
+          description: Wallet added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletDetails'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: User not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Wallet already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /wallets/{address}:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Ethereum wallet address
+    get:
+      summary: Get wallet details
+      description: Get detailed information about a specific wallet
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: refresh
+          in: query
+          schema:
+            type: boolean
+          description: Force refresh cache
+      responses:
+        '200':
+          description: Wallet details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletDetails'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update wallet
+      description: Update wallet nickname or tag
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletInput'
+      responses:
+        '200':
+          description: Wallet updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletDetails'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete wallet
+      description: Remove a wallet from tracking
+      security:
+        - cookieAuth: []
+      responses:
+        '204':
+          description: Wallet deleted successfully
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /wallets/{address}/fumbles:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Ethereum wallet address
+      - name: timeframe
+        in: query
+        schema:
+          type: string
+          enum: [7d, 30d, 90d, all]
+        description: Analysis timeframe
+    get:
+      summary: Get wallet fumbles
+      description: Analyze wallet transactions to find missed opportunities
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Fumble analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FumbleResult'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /wallets/{address}/export:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Ethereum wallet address
+    post:
+      summary: Export fumbles as PNG
+      description: Generate a shareable PNG image of fumble analysis
+      security:
+        - cookieAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                theme:
+                  type: string
+                  enum: [default, dark, light]
+                  description: Image theme
+      responses:
+        '200':
+          description: Presigned URL for PNG
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    description: S3 presigned URL
+                    example: "https://swapjeet-assets.s3.amazonaws.com/fumbles/123/abc.png"
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /preferences:
+    get:
+      summary: Get user preferences
+      description: Get user's application preferences
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: User preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update user preferences
+      description: Update user's application preferences
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferences'
+      responses:
+        '200':
+          description: Preferences updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error' 
