@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { verifyToken } from '../utils/auth';
-import { logger } from '../utils/logger';
+import { logger } from '../config/logger';
 import NodeCache from 'node-cache';
 
 interface AuthenticatedSocket extends Socket {
@@ -30,7 +30,13 @@ export const setupWebSocket = (io: Server) => {
   });
 
   io.on('connection', (socket: AuthenticatedSocket) => {
-    logger.info(`Client connected: ${socket.id}`);
+    const clientId = socket.id;
+    logger.info('WebSocket client connected', {
+      clientId,
+      transport: socket.conn.transport.name,
+      address: socket.handshake.address,
+      userAgent: socket.handshake.headers['user-agent']
+    });
 
     // Join user-specific room
     if (socket.userId) {
@@ -61,8 +67,19 @@ export const setupWebSocket = (io: Server) => {
       logger.info(`Client ${socket.id} unsubscribed from wallet ${address}`);
     });
 
-    socket.on('disconnect', () => {
-      logger.info(`Client disconnected: ${socket.id}`);
+    socket.on('disconnect', (reason) => {
+      logger.info('WebSocket client disconnected', {
+        clientId,
+        reason
+      });
+    });
+
+    socket.on('error', (error) => {
+      logger.error('WebSocket error', {
+        clientId,
+        error: error.message,
+        stack: error.stack
+      });
     });
   });
 
@@ -72,6 +89,15 @@ export const setupWebSocket = (io: Server) => {
     walletUpdateCache.set(address.toLowerCase(), data);
     io.to(room).emit('wallet_update', data);
   };
+
+  // Log server events
+  io.engine.on('connection_error', (err) => {
+    logger.error('WebSocket connection error', {
+      error: err.message,
+      code: err.code,
+      context: err.context
+    });
+  });
 
   return {
     broadcastWalletUpdate

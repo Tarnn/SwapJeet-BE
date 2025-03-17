@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { logger } from '../utils/logger';
+import { logger, logAPIError } from '../config/logger';
 
 export class AppError extends Error {
   constructor(
@@ -20,29 +20,32 @@ export const errorHandler = (
   next: NextFunction
 ) => {
   if (err instanceof AppError) {
-    logger.warn({
-      message: err.message,
+    logAPIError(err, req, {
       statusCode: err.statusCode,
-      path: req.path,
-      method: req.method
+      isOperational: err.isOperational
     });
 
     return res.status(err.statusCode).json({
       status: 'error',
-      message: err.message
+      message: err.message,
+      requestId: req.headers['x-request-id']
     });
   }
 
   // Unexpected errors
-  logger.error({
-    message: err.message,
-    stack: err.stack,
-    path: req.path,
-    method: req.method
+  logAPIError(err, req, {
+    statusCode: 500,
+    isOperational: false
   });
+
+  // Only send error details in development
+  const message = process.env.NODE_ENV === 'development' 
+    ? err.message 
+    : 'Internal server error';
 
   return res.status(500).json({
     status: 'error',
-    message: 'Internal server error'
+    message,
+    requestId: req.headers['x-request-id']
   });
 }; 

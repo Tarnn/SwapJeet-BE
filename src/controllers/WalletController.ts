@@ -11,18 +11,26 @@ import { TABLES, S3_BUCKET } from '../config/database';
 import { walletDetailsCache, walletUpdatesCache } from '../config/cache';
 import { AppError } from '../middleware/errorHandler';
 import { calculateFumbles } from '../services/fumbleCalculator';
+import { logger, logAPIRequest, logAPIError } from '../config/logger';
 
 export class WalletController {
   private docClient: DynamoDBDocumentClient;
 
-  constructor(dynamoDb: DynamoDBClient) {
-    this.docClient = DynamoDBDocumentClient.from(dynamoDb);
+  constructor() {
+    const client = new DynamoDBClient({});
+    this.docClient = DynamoDBDocumentClient.from(client);
   }
 
   async addWallet(req: Request<{}, {}, AddWalletInput>, res: Response) {
     try {
       const { address, nickname, tag } = req.body;
       const userId = req.user?.userId;
+
+      logAPIRequest('Adding new wallet', req, {
+        address,
+        nickname,
+        tag
+      });
 
       if (!userId) {
         throw new AppError(401, 'User not authenticated');
@@ -89,8 +97,15 @@ export class WalletController {
 
       walletDetailsCache.set(`wallet_${address.toLowerCase()}`, details);
 
+      logger.info('Wallet added successfully', {
+        userId,
+        address,
+        requestId: req.headers['x-request-id']
+      });
+
       res.status(201).json(wallet);
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -105,6 +120,11 @@ export class WalletController {
       const { address } = req.params;
       const updates = req.body;
       const userId = req.user?.userId;
+
+      logAPIRequest('Updating wallet', req, {
+        address,
+        updates
+      });
 
       if (!userId) {
         throw new AppError(401, 'User not authenticated');
@@ -135,8 +155,16 @@ export class WalletController {
         Item: updatedWallet
       }));
 
+      logger.info('Wallet updated successfully', {
+        userId,
+        address,
+        updates,
+        requestId: req.headers['x-request-id']
+      });
+
       res.json(updatedWallet);
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -150,6 +178,8 @@ export class WalletController {
     try {
       const { address } = req.params;
       const userId = req.user?.userId;
+
+      logAPIRequest('Deleting wallet', req, { address });
 
       if (!userId) {
         throw new AppError(401, 'User not authenticated');
@@ -168,8 +198,15 @@ export class WalletController {
       walletDetailsCache.del(`wallet_${address.toLowerCase()}`);
       walletUpdatesCache.del(`updates_${address.toLowerCase()}`);
 
+      logger.info('Wallet deleted successfully', {
+        userId,
+        address,
+        requestId: req.headers['x-request-id']
+      });
+
       res.status(204).send();
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -211,6 +248,7 @@ export class WalletController {
 
       res.json({ wallets: walletsWithDetails });
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -256,8 +294,15 @@ export class WalletController {
       // Cache details
       walletDetailsCache.set(`wallet_${normalizedAddress}`, details);
 
+      logger.info('Wallet details retrieved', {
+        userId: req.user?.userId,
+        address,
+        requestId: req.headers['x-request-id']
+      });
+
       res.json(details);
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -286,6 +331,7 @@ export class WalletController {
 
       res.json(fumbles);
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {
@@ -299,6 +345,8 @@ export class WalletController {
     try {
       const { address } = req.params;
       const userId = req.user?.userId;
+
+      logAPIRequest('Exporting fumbles as PNG', req, { address });
 
       if (!userId) {
         throw new AppError(401, 'User not authenticated');
@@ -367,8 +415,16 @@ export class WalletController {
         { expiresIn: 7 * 24 * 60 * 60 }
       );
 
+      logger.info('Fumbles exported successfully', {
+        userId,
+        address,
+        requestId: req.headers['x-request-id'],
+        s3Key: key
+      });
+
       res.json({ url: presignedUrl });
     } catch (error) {
+      logAPIError(error as Error, req);
       if (error instanceof AppError) {
         res.status(error.statusCode).json({ error: error.message });
       } else {

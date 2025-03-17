@@ -1,41 +1,63 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import { verifyToken } from '../utils/auth';
+import { logger } from '../config/logger';
 import { AppError } from './errorHandler';
 
-export interface AuthenticatedRequest extends Request {
-  user?: {
-    userId: string;
-    email: string;
-  };
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        email: string;
+      };
+    }
+  }
 }
 
-export const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+export const authMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const token = req.cookies.swapjeet_token;
+    const token = req.cookies?.swapjeet_token;
 
     if (!token) {
+      logger.warn('Authentication failed: No token provided', {
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        requestId: req.headers['x-request-id']
+      });
       throw new AppError(401, 'Authentication required');
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-      userId: string;
-      email: string;
-      iat: number;
-      exp: number;
-    };
+    try {
+      const decoded = await verifyToken(token);
+      req.user = {
+        userId: decoded.userId,
+        email: decoded.email
+      };
 
-    req.user = {
-      userId: decoded.userId,
-      email: decoded.email
-    };
+      logger.debug('User authenticated', {
+        userId: decoded.userId,
+        path: req.path,
+        method: req.method,
+        requestId: req.headers['x-request-id']
+      });
 
-    next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      res.clearCookie('swapjeet_token');
-      next(new AppError(401, 'Token expired'));
-    } else {
-      next(new AppError(401, 'Invalid token'));
+      next();
+    } catch (error) {
+      logger.warn('Authentication failed: Invalid token', {
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        requestId: req.headers['x-request-id']
+      });
+      throw new AppError(401, 'Invalid or expired token');
     }
+  } catch (error) {
+    next(error);
   }
 }; 
