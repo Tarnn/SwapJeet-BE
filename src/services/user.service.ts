@@ -1,12 +1,11 @@
-import { DynamoDB } from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../config/logger';
 import { AppError } from '../middleware/errorHandler';
 import { User, CreateUserDto, UpdateUserDto, UserRole, UserAction, SecuritySettings } from '../interfaces/user.interface';
 import { logUserActivity } from './activity.service';
 import NodeCache from 'node-cache';
+import dynamoDB from '../config/dynamodb';
 
-const dynamoDB = new DynamoDB.DocumentClient();
 const userCache = new NodeCache({ stdTTL: 3600 }); // Cache for 1 hour
 
 const TABLE_NAME = process.env.USERS_TABLE || 'users';

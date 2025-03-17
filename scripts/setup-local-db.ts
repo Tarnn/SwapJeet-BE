@@ -1,33 +1,33 @@
-import { DynamoDB } from 'aws-sdk';
-import dotenv from 'dotenv';
+import { DynamoDBClient, CreateTableCommand, ListTablesCommand, ScalarAttributeType, KeyType, ProjectionType } from '@aws-sdk/client-dynamodb';
+import 'dotenv/config';
 
-dotenv.config();
-
-const dynamoDB = new DynamoDB({
-  region: 'local',
-  endpoint: 'http://localhost:8000',
-  accessKeyId: 'local',
-  secretAccessKey: 'local'
+const client = new DynamoDBClient({
+  region: process.env.AWS_REGION || 'local',
+  endpoint: process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000',
+  credentials: {
+    accessKeyId: 'local',
+    secretAccessKey: 'local'
+  }
 });
 
 const tables = [
   {
     TableName: process.env.USERS_TABLE || 'users',
     KeySchema: [
-      { AttributeName: 'userId', KeyType: 'HASH' }
+      { AttributeName: 'userId', KeyType: KeyType.HASH }
     ],
     AttributeDefinitions: [
-      { AttributeName: 'userId', AttributeType: 'S' },
-      { AttributeName: 'email', AttributeType: 'S' }
+      { AttributeName: 'userId', AttributeType: ScalarAttributeType.S },
+      { AttributeName: 'email', AttributeType: ScalarAttributeType.S }
     ],
     GlobalSecondaryIndexes: [
       {
-        IndexName: 'EmailIndex',
+        IndexName: 'email-index',
         KeySchema: [
-          { AttributeName: 'email', KeyType: 'HASH' }
+          { AttributeName: 'email', KeyType: KeyType.HASH }
         ],
         Projection: {
-          ProjectionType: 'ALL'
+          ProjectionType: ProjectionType.ALL
         },
         ProvisionedThroughput: {
           ReadCapacityUnits: 5,
@@ -43,12 +43,12 @@ const tables = [
   {
     TableName: process.env.USER_ACTIVITY_TABLE || 'user_activities',
     KeySchema: [
-      { AttributeName: 'userId', KeyType: 'HASH' },
-      { AttributeName: 'timestamp', KeyType: 'RANGE' }
+      { AttributeName: 'userId', KeyType: KeyType.HASH },
+      { AttributeName: 'timestamp', KeyType: KeyType.RANGE }
     ],
     AttributeDefinitions: [
-      { AttributeName: 'userId', AttributeType: 'S' },
-      { AttributeName: 'timestamp', AttributeType: 'S' }
+      { AttributeName: 'userId', AttributeType: ScalarAttributeType.S },
+      { AttributeName: 'timestamp', AttributeType: ScalarAttributeType.S }
     ],
     ProvisionedThroughput: {
       ReadCapacityUnits: 5,
@@ -58,12 +58,12 @@ const tables = [
   {
     TableName: process.env.WALLETS_TABLE || 'wallets',
     KeySchema: [
-      { AttributeName: 'userId', KeyType: 'HASH' },
-      { AttributeName: 'address', KeyType: 'RANGE' }
+      { AttributeName: 'userId', KeyType: KeyType.HASH },
+      { AttributeName: 'address', KeyType: KeyType.RANGE }
     ],
     AttributeDefinitions: [
-      { AttributeName: 'userId', AttributeType: 'S' },
-      { AttributeName: 'address', AttributeType: 'S' }
+      { AttributeName: 'userId', AttributeType: ScalarAttributeType.S },
+      { AttributeName: 'address', AttributeType: ScalarAttributeType.S }
     ],
     ProvisionedThroughput: {
       ReadCapacityUnits: 5,
@@ -73,21 +73,35 @@ const tables = [
 ];
 
 async function createTables() {
-  for (const tableParams of tables) {
-    try {
-      console.log(`Creating table: ${tableParams.TableName}`);
-      await dynamoDB.createTable(tableParams).promise();
-      console.log(`Table ${tableParams.TableName} created successfully`);
-    } catch (error) {
-      if (error.code === 'ResourceInUseException') {
-        console.log(`Table ${tableParams.TableName} already exists`);
-      } else {
-        console.error(`Error creating table ${tableParams.TableName}:`, error);
+  try {
+    // List existing tables
+    const { TableNames } = await client.send(new ListTablesCommand({}));
+    console.log('Existing tables:', TableNames);
+
+    // Create tables
+    for (const tableConfig of tables) {
+      try {
+        if (TableNames?.includes(tableConfig.TableName)) {
+          console.log(`Table ${tableConfig.TableName} already exists`);
+          continue;
+        }
+
+        await client.send(new CreateTableCommand(tableConfig));
+        console.log(`Created table ${tableConfig.TableName}`);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ResourceInUseException') {
+          console.log(`Table ${tableConfig.TableName} already exists`);
+        } else {
+          console.error(`Error creating table ${tableConfig.TableName}:`, error);
+        }
       }
     }
+
+    console.log('All tables created successfully');
+  } catch (error) {
+    console.error('Error setting up tables:', error);
+    process.exit(1);
   }
 }
 
-createTables()
-  .then(() => console.log('Setup complete'))
-  .catch(error => console.error('Setup failed:', error)); 
+createTables(); 

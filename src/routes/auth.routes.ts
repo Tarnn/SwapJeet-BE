@@ -6,6 +6,7 @@ import { loginWithPassword, setPassword, generatePasswordResetToken, resetPasswo
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { validatePassword } from '../utils/validation';
+import { hashPassword } from '../utils/passwordUtils';
 
 const router = Router();
 
@@ -141,6 +142,110 @@ router.post('/refresh', authLimiter, async (req, res, next) => {
     res.status(200).json({ token: newToken });
   } catch (error) {
     logger.error('Token refresh error', { 
+      requestId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    next(error);
+  }
+});
+
+// Password-based login
+router.post('/login', authLimiter, async (req, res, next) => {
+  const requestId = req.headers['x-request-id'];
+  
+  try {
+    const { email, password } = req.body;
+    const clientIp = req.ip;
+
+    if (!email || !password) {
+      logger.warn('Login attempt without email or password', { requestId, clientIp });
+      throw new AppError(400, 'Email and password are required');
+    }
+
+    // Attempt login
+    const { user, token } = await loginWithPassword(email, password);
+    logger.info('User logged in successfully', { 
+      requestId, 
+      userId: user.userId,
+      email: user.email 
+    });
+
+    // Set secure cookie with JWT
+    res.cookie('swapjeet_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+
+    res.status(200).json({
+      userId: user.userId,
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      nickname: user.nickname
+    });
+  } catch (error) {
+    logger.error('Login error', { 
+      requestId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    next(error);
+  }
+});
+
+// Registration endpoint
+router.post('/register', authLimiter, async (req, res, next) => {
+  const requestId = req.headers['x-request-id'];
+  
+  try {
+    const { email, password, name } = req.body;
+    const clientIp = req.ip;
+
+    if (!email || !password) {
+      logger.warn('Registration attempt without email or password', { requestId, clientIp });
+      throw new AppError(400, 'Email and password are required');
+    }
+
+    // Hash the password
+    const hashedPassword = await hashPassword(password);
+
+    // Create user
+    const user = await createUser({
+      email,
+      name,
+      password: hashedPassword,
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
+    });
+
+    logger.info('User registered successfully', { 
+      requestId, 
+      userId: user.userId,
+      email: user.email 
+    });
+
+    // Generate JWT
+    const token = generateToken({
+      userId: user.userId,
+      email: user.email
+    });
+
+    // Set secure cookie with JWT
+    res.cookie('swapjeet_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+
+    res.status(201).json({
+      userId: user.userId,
+      email: user.email,
+      name: user.name
+    });
+  } catch (error) {
+    logger.error('Registration error', { 
       requestId,
       error: error instanceof Error ? error.message : 'Unknown error'
     });
