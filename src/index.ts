@@ -6,6 +6,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
+import swaggerUi from 'swagger-ui-express';
+import * as yaml from 'js-yaml';
+import * as fs from 'fs';
+import * as path from 'path';
 import { errorHandler } from './middleware/errorHandler';
 import { generateCsrfToken, validateCsrfToken } from './middleware/csrf';
 import { setupRoutes } from './routes';
@@ -23,6 +27,11 @@ const io = new Server(httpServer, {
   pingInterval: parseInt(process.env.WS_PING_INTERVAL || '300000'),
   pingTimeout: parseInt(process.env.WS_PING_TIMEOUT || '10000')
 });
+
+// Load Swagger document
+const swaggerDocument = yaml.load(
+  fs.readFileSync(path.join(__dirname, 'swagger.yaml'), 'utf8')
+) as object;
 
 // Security middleware
 app.use(helmet({
@@ -72,6 +81,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(generateCsrfToken);
 app.use(validateCsrfToken);
 
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'SwapJeet API Documentation',
+  customfavIcon: '/favicon.ico'
+}));
+
 // Setup routes
 setupRoutes(app);
 
@@ -111,5 +127,6 @@ process.on('SIGINT', gracefulShutdown);
 
 httpServer.listen(PORT, () => {
   logger.info(`Server is running on port ${PORT}`);
+  logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
   logger.info(`Environment: ${process.env.NODE_ENV}`);
 });
