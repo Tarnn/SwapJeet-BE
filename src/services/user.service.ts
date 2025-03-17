@@ -1,9 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../config/logger';
-import { AppError } from '../middleware/errorHandler';
+import { AppError } from '../utils/AppError';
 import { User, CreateUserDto, UpdateUserDto, UserRole, UserAction, SecuritySettings } from '../interfaces/user.interface';
 import { logUserActivity } from './activity.service';
 import NodeCache from 'node-cache';
+import { QueryCommand, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import dynamoDB from '../config/dynamodb';
 
 const userCache = new NodeCache({ stdTTL: 3600 }); // Cache for 1 hour
@@ -20,16 +21,16 @@ export async function findUserByEmail(email: string): Promise<User | null> {
   }
 
   try {
-    const params = {
+    const command = new QueryCommand({
       TableName: TABLE_NAME,
-      IndexName: 'EmailIndex',
+      IndexName: 'email-index',
       KeyConditionExpression: 'email = :email',
       ExpressionAttributeValues: {
         ':email': email
       }
-    };
+    });
 
-    const result = await dynamoDB.query(params).promise();
+    const result = await dynamoDB.send(command);
     
     if (!result.Items || result.Items.length === 0) {
       logger.debug('User not found', { email });
@@ -60,14 +61,14 @@ export async function findUserById(userId: string): Promise<User | null> {
   }
 
   try {
-    const params = {
+    const command = new GetCommand({
       TableName: TABLE_NAME,
       Key: {
         userId
       }
-    };
+    });
 
-    const result = await dynamoDB.get(params).promise();
+    const result = await dynamoDB.send(command);
     
     if (!result.Item) {
       logger.debug('User not found', { userId });
@@ -108,13 +109,13 @@ export async function createUser(userData: CreateUserDto): Promise<User> {
       }
     };
 
-    const params = {
+    const command = new PutCommand({
       TableName: TABLE_NAME,
       Item: user,
       ConditionExpression: 'attribute_not_exists(email)'
-    };
+    });
 
-    await dynamoDB.put(params).promise();
+    await dynamoDB.send(command);
     
     logger.info('User created successfully', { 
       userId,

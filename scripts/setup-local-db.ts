@@ -2,8 +2,8 @@ import { DynamoDBClient, CreateTableCommand, ListTablesCommand, ScalarAttributeT
 import 'dotenv/config';
 
 const client = new DynamoDBClient({
-  region: process.env.AWS_REGION || 'local',
-  endpoint: process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000',
+  region: 'local',
+  endpoint: 'http://127.0.0.1:8000',
   credentials: {
     accessKeyId: 'local',
     secretAccessKey: 'local'

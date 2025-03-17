@@ -1,9 +1,9 @@
-import { DynamoDB } from 'aws-sdk';
+import { PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '../config/logger';
-import { AppError } from '../middleware/errorHandler';
+import { AppError } from '../utils/AppError';
 import { UserActivityLog, UserAction } from '../interfaces/user.interface';
+import dynamoDB from '../config/dynamodb';
 
-const dynamoDB = new DynamoDB.DocumentClient();
 const TABLE_NAME = process.env.USER_ACTIVITY_TABLE || 'user_activities';
 
 export async function logUserActivity(activity: Omit<UserActivityLog, 'timestamp'> & { timestamp?: string }): Promise<void> {
@@ -14,12 +14,12 @@ export async function logUserActivity(activity: Omit<UserActivityLog, 'timestamp
       timestamp
     };
 
-    const params = {
+    const command = new PutCommand({
       TableName: TABLE_NAME,
       Item: activityLog
-    };
+    });
 
-    await dynamoDB.put(params).promise();
+    await dynamoDB.send(command);
     
     logger.debug('Activity logged successfully', { 
       userId: activity.userId,
@@ -66,7 +66,7 @@ export async function getUserActivities(
       expressionAttributeValues[':actions'] = actions;
     }
 
-    const params = {
+    const command = new ScanCommand({
       TableName: TABLE_NAME,
       FilterExpression: filterExpression,
       ExpressionAttributeNames: {
@@ -75,9 +75,9 @@ export async function getUserActivities(
       },
       ExpressionAttributeValues: expressionAttributeValues,
       Limit: limit
-    };
+    });
 
-    const result = await dynamoDB.scan(params).promise();
+    const result = await dynamoDB.send(command);
     
     if (!result.Items) {
       return [];

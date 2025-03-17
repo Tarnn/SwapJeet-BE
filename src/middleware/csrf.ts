@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { randomBytes } from 'crypto';
-import { AppError } from '../middleware/errorHandler';
+import { AppError } from '../utils/AppError';
 import { logger } from '../config/logger';
 
 const CSRF_COOKIE_NAME = 'XSRF-TOKEN';
@@ -8,42 +8,59 @@ const CSRF_HEADER_NAME = 'X-XSRF-TOKEN';
 
 export const generateCsrfToken = (req: Request, res: Response, next: NextFunction): void => {
   try {
-    // Generate a random token
-    const csrfToken = randomBytes(32).toString('hex');
-    
-    // Set the CSRF token cookie
-    res.cookie(CSRF_COOKIE_NAME, csrfToken, {
-      httpOnly: false, // Client needs to read this
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      path: '/'
-    });
+    // Only generate a new token if one doesn't exist in the cookies
+    if (!req.cookies[CSRF_COOKIE_NAME]) {
+      const csrfToken = randomBytes(32).toString('hex');
+      
+      // Set the CSRF token cookie
+      res.cookie(CSRF_COOKIE_NAME, csrfToken, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/'
+      });
 
-    // Store token in request for other middleware
-    req.csrfToken = csrfToken;
+      // Store token in request for other middleware
+      req.csrfToken = csrfToken;
+      
+      logger.debug('New CSRF token generated', { token: csrfToken });
+    } else {
+      // Use existing token
+      req.csrfToken = req.cookies[CSRF_COOKIE_NAME];
+      logger.debug('Using existing CSRF token', { token: req.csrfToken });
+    }
     
     next();
   } catch (error) {
-    logger.error('Error generating CSRF token', { error });
+    logger.error('Error handling CSRF token', { error });
     next(new AppError(500, 'Error generating security token'));
   }
 };
 
 export const validateCsrfToken = (req: Request, res: Response, next: NextFunction): void => {
   try {
-    // Skip CSRF check for non-mutating methods
-    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    // Skip CSRF check for non-mutating methods and health check
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path === '/health') {
       return next();
     }
 
     const cookieToken = req.cookies[CSRF_COOKIE_NAME];
-    const headerToken = req.headers[CSRF_HEADER_NAME.toLowerCase()];
+    const headerToken = req.header(CSRF_HEADER_NAME);
+
+    logger.debug('CSRF Validation', {
+      cookieToken,
+      headerToken,
+      path: req.path,
+      method: req.method
+    });
 
     if (!cookieToken || !headerToken) {
       logger.warn('Missing CSRF token', { 
         path: req.path,
         method: req.method,
-        ip: req.ip
+        ip: req.ip,
+        cookieExists: !!cookieToken,
+        headerExists: !!headerToken
       });
       throw new AppError(403, 'Invalid security token');
     }
@@ -52,7 +69,9 @@ export const validateCsrfToken = (req: Request, res: Response, next: NextFunctio
       logger.warn('CSRF token mismatch', {
         path: req.path,
         method: req.method,
-        ip: req.ip
+        ip: req.ip,
+        cookieToken,
+        headerToken
       });
       throw new AppError(403, 'Invalid security token');
     }

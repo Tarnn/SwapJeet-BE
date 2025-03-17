@@ -10,6 +10,7 @@ import swaggerUi from 'swagger-ui-express';
 import * as yaml from 'js-yaml';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { errorHandler } from './middleware/errorHandler';
 import { generateCsrfToken, validateCsrfToken } from './middleware/csrf';
 import { setupRoutes } from './routes';
@@ -20,7 +21,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CORS_ORIGIN,
+    origin: true,
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -41,20 +42,25 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", process.env.CORS_ORIGIN || '']
+      connectSrc: ["'self'", '*']
     }
   }
 }));
 
+// CORS configuration
 app.use(cors({
-  origin: process.env.CORS_ORIGIN,
+  origin: true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-XSRF-TOKEN']
 }));
 
 // Cookie parser middleware
 app.use(cookieParser(process.env.COOKIE_SECRET));
+
+// Body parsing
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -73,9 +79,24 @@ app.use((req, res, next) => {
 // Enhanced logging setup
 app.use(...morganMiddleware);
 
-// Body parsing
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Health check endpoint (before CSRF middleware)
+app.get('/health', (req, res) => {
+  // Generate a new CSRF token
+  const csrfToken = randomBytes(32).toString('hex');
+  
+  // Set the CSRF token cookie
+  res.cookie('XSRF-TOKEN', csrfToken, {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/'
+  });
+
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // CSRF protection
 app.use(generateCsrfToken);
@@ -93,14 +114,6 @@ setupRoutes(app);
 
 // Setup WebSocket
 setupWebSocket(io);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Error handling
 app.use(errorHandler);
