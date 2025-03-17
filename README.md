@@ -21,7 +21,11 @@ Frontend Repository: [SwapJeet Frontend](https://github.com/Tarnn/SwapJeet)
 ## Core Features
 
 - 🔐 Google OAuth Authentication
-- 📊 Wallet Data Aggregation
+- 📊 Wallet Data Aggregation via Zapper GraphQL API
+  - Real-time token balances
+  - Multi-network support (Ethereum, Base, Polygon, etc.)
+  - Token metadata and prices
+  - Total portfolio value
 - ⚡ Real-time Wallet Updates
 - 📈 Paperhands Calculator
 - 🏆 Leaderboard System
@@ -30,7 +34,10 @@ Frontend Repository: [SwapJeet Frontend](https://github.com/Tarnn/SwapJeet)
 
 ## External API Integrations
 
-- Zapper.fi - Wallet data and transactions
+- Zapper.fi GraphQL API
+  - Portfolio data via `portfolioV2` query
+  - Token balances and metadata
+  - Multi-network support
 - Etherscan - Backup transaction data
 - CoinGecko - Historical price data
 
@@ -97,13 +104,23 @@ npm run dev
 |--------|----------|-------------|
 | GET    | `/api/wallets` | Get user's wallets |
 | POST   | `/api/wallets` | Add a new wallet |
-| GET    | `/api/wallets/{address}` | Get wallet details |
+| GET    | `/api/wallets/{address}` | Get wallet details with token balances |
+| GET    | `/api/wallets/{address}?refresh=true` | Force refresh wallet data |
 | PATCH  | `/api/wallets/{address}` | Update wallet |
 | DELETE | `/api/wallets/{address}` | Delete wallet |
 | GET    | `/api/wallets/{address}/fumbles` | Get wallet fumbles |
 | POST   | `/api/wallets/{address}/export` | Export fumbles as PNG |
 | GET    | `/api/preferences` | Get user preferences |
 | PATCH  | `/api/preferences` | Update user preferences |
+
+### Wallet Details Response
+
+The wallet details endpoint returns:
+- Token balances across multiple networks
+- Token metadata (symbol, name, decimals)
+- Current prices and USD values
+- Total portfolio value
+- Top holdings sorted by value
 
 ### Authentication
 
@@ -112,7 +129,7 @@ All endpoints require authentication via JWT token in a cookie named `swapjeet_t
 ### Rate Limiting
 
 - 10 requests per minute per IP address
-- Wallet details cached for 15 minutes
+- Wallet details cached for 5 minutes
 - Leaderboard data cached for 1 hour
 - Transaction data cached for 24 hours
 

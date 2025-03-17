@@ -68,52 +68,86 @@ components:
           items:
             type: object
             properties:
-              symbol:
+              network:
                 type: string
-                description: Token symbol
+                description: Network name (e.g., Ethereum, Base, Polygon)
               balance:
-                type: string
+                type: number
                 description: Token balance
-              value:
+              balanceUSD:
                 type: number
-                description: USD value of tokens
-              price:
-                type: number
-                description: Current token price in USD
+                description: USD value of token balance
+              token:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: Token name
+                  symbol:
+                    type: string
+                    description: Token symbol
+                  decimals:
+                    type: integer
+                    description: Token decimals
+                  price:
+                    type: number
+                    description: Current token price in USD
+                  address:
+                    type: string
+                    description: Token contract address
+                  imgUrl:
+                    type: string
+                    nullable: true
+                    description: Token icon URL
         netWorth:
           type: number
           description: Total USD value of all tokens
-        topGainer:
+        topHoldings:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenBalance'
+          description: Top 5 holdings by USD value
+        tokenCount:
+          type: integer
+          description: Total number of tokens in wallet
+        lastUpdated:
+          type: string
+          format: date-time
+          description: Last update timestamp
+    TokenBalance:
+      type: object
+      properties:
+        network:
+          type: string
+          description: Network name
+        balance:
+          type: number
+          description: Token balance
+        balanceUSD:
+          type: number
+          description: USD value of token balance
+        token:
           type: object
           properties:
+            name:
+              type: string
+              description: Token name
             symbol:
               type: string
               description: Token symbol
-            change24h:
+            decimals:
+              type: integer
+              description: Token decimals
+            price:
               type: number
-              description: 24-hour price change percentage
-        topLoser:
-          type: object
-          properties:
-            symbol:
+              description: Current token price in USD
+            address:
               type: string
-              description: Token symbol
-            change24h:
-              type: number
-              description: 24-hour price change percentage
-      example:
-        address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
-        tokens: [
-          {
-            symbol: "ETH",
-            balance: "1.5",
-            value: 3000,
-            price: 2000
-          }
-        ]
-        netWorth: 3000
-        topGainer: { symbol: "ETH", change24h: 5.2 }
-        topLoser: { symbol: "USDT", change24h: -0.1 }
+              description: Token contract address
+            imgUrl:
+              type: string
+              nullable: true
+              description: Token icon URL
     FumbleResult:
       type: object
       properties:
@@ -309,7 +343,9 @@ paths:
         description: Ethereum wallet address
     get:
       summary: Get wallet details
-      description: Get detailed information about a specific wallet
+      description: |
+        Get detailed information about a specific wallet including token balances across multiple networks.
+        Data is fetched from Zapper's GraphQL API and includes token metadata, prices, and total portfolio value.
       security:
         - cookieAuth: []
       parameters:
@@ -317,10 +353,10 @@ paths:
           in: query
           schema:
             type: boolean
-          description: Force refresh cache
+          description: Force refresh cache (default cache duration is 5 minutes)
       responses:
         '200':
-          description: Wallet details
+          description: Wallet details including token balances and portfolio value
           content:
             application/json:
               schema:
