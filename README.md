@@ -88,16 +88,35 @@ npm run dev
 
 ## API Documentation
 
-Detailed API documentation will be available at `/api-docs` when running the server.
+[![API Docs](https://img.shields.io/badge/API%20Documentation-Swagger-green)](./src/swagger.yaml)
+[![OpenAPI 3.0](https://img.shields.io/badge/OpenAPI-3.0-blue)](https://swagger.io/specification/)
 
-### Main Endpoints
+### Available Endpoints
 
-- `POST /api/auth/google` - Google OAuth authentication
-- `POST /api/wallets` - Add wallet for tracking
-- `GET /api/wallets/{address}` - Get wallet details
-- `GET /api/fumbles/{address}` - Calculate paperhands metrics
-- `GET /api/leaderboard` - Get global leaderboard
-- `PATCH /api/prefs` - Update user preferences
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET    | `/api/wallets` | Get user's wallets |
+| POST   | `/api/wallets` | Add a new wallet |
+| GET    | `/api/wallets/{address}` | Get wallet details |
+| PATCH  | `/api/wallets/{address}` | Update wallet |
+| DELETE | `/api/wallets/{address}` | Delete wallet |
+| GET    | `/api/wallets/{address}/fumbles` | Get wallet fumbles |
+| POST   | `/api/wallets/{address}/export` | Export fumbles as PNG |
+| GET    | `/api/preferences` | Get user preferences |
+| PATCH  | `/api/preferences` | Update user preferences |
+
+### Authentication
+
+All endpoints require authentication via JWT token in a cookie named `swapjeet_token`.
+
+### Rate Limiting
+
+- 10 requests per minute per IP address
+- Wallet details cached for 15 minutes
+- Leaderboard data cached for 1 hour
+- Transaction data cached for 24 hours
+
+For detailed API documentation including request/response schemas, run the server and visit `/api-docs`.
 
 ## Contributing
 
