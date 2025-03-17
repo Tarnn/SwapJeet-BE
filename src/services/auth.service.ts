@@ -3,8 +3,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { User, UserAction } from '../interfaces/user.interface';
 import { findUserByEmail, updateUser } from './user.service';
 import { logUserActivity } from './activity.service';
-import { AppError } from '../middleware/errorHandler';
+import { AppError } from '../utils/AppError';
 import { logger } from '../config/logger';
+import { generateToken } from '../utils/auth';
 
 const SALT_ROUNDS = 12;
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -14,20 +15,20 @@ export const hashPassword = async (password: string): Promise<string> => {
   return bcrypt.hash(password, SALT_ROUNDS);
 };
 
-export const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
-  return bcrypt.compare(password, hash);
+export const verifyPassword = async (password: string, hashedPassword: string): Promise<boolean> => {
+  return bcrypt.compare(password, hashedPassword);
 };
 
 export const setPassword = async (userId: string, password: string): Promise<void> => {
   const hashedPassword = await hashPassword(password);
   await updateUser(userId, {
     password: hashedPassword,
-    lastPasswordChange: new Date().toISOString()
+    updatedAt: new Date().toISOString()
   });
 
   await logUserActivity({
     userId,
-    action: UserAction.PASSWORD_CHANGE,
+    action: UserAction.PASSWORD_CHANGED,
     details: {
       timestamp: new Date().toISOString()
     }
@@ -37,9 +38,9 @@ export const setPassword = async (userId: string, password: string): Promise<voi
 export const loginWithPassword = async (
   email: string,
   password: string,
-  ip: string,
-  userAgent: string
-): Promise<User> => {
+  ip?: string,
+  userAgent?: string
+): Promise<{ user: User; token: string }> => {
   const user = await findUserByEmail(email);
   if (!user) {
     throw new AppError(401, 'Invalid credentials');
@@ -61,7 +62,11 @@ export const loginWithPassword = async (
   }
 
   // Verify password
-  const isValid = await verifyPassword(password, user.password!);
+  if (!user.password) {
+    throw new AppError(401, 'Password login not enabled for this account');
+  }
+
+  const isValid = await verifyPassword(password, user.password);
   
   if (!isValid) {
     const failedAttempts = (user.failedLoginAttempts || 0) + 1;
@@ -80,7 +85,7 @@ export const loginWithPassword = async (
     
     await logUserActivity({
       userId: user.userId,
-      action: UserAction.FAILED_LOGIN,
+      action: UserAction.LOGIN_FAILED,
       details: {
         ip,
         userAgent,
@@ -98,9 +103,15 @@ export const loginWithPassword = async (
     lastLogin: new Date().toISOString()
   });
 
+  // Generate JWT token
+  const token = generateToken({
+    userId: user.userId,
+    email: user.email
+  });
+
   await logUserActivity({
     userId: user.userId,
-    action: UserAction.LOGIN,
+    action: UserAction.LOGIN_SUCCESS,
     details: {
       ip,
       userAgent,
@@ -108,7 +119,7 @@ export const loginWithPassword = async (
     }
   });
 
-  return user;
+  return { user, token };
 };
 
 export const generatePasswordResetToken = async (email: string): Promise<string> => {

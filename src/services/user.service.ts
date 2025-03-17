@@ -177,13 +177,13 @@ export async function updateUser(userId: string, updates: UpdateUserDto): Promis
       securitySettings
     };
 
-    const params = {
+    const command = new PutCommand({
       TableName: TABLE_NAME,
       Item: updatedUser,
       ConditionExpression: 'attribute_exists(userId)'
-    };
+    });
 
-    await dynamoDB.put(params).promise();
+    await dynamoDB.send(command);
     
     // Clear cache entries
     userCache.del(`user:id:${userId}`);
@@ -218,7 +218,7 @@ export async function deactivateUser(userId: string): Promise<void> {
   try {
     const timestamp = new Date().toISOString();
     
-    const params = {
+    const command = new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { userId },
       UpdateExpression: 'SET isActive = :isActive, deactivatedAt = :timestamp, updatedAt = :timestamp',
@@ -227,9 +227,9 @@ export async function deactivateUser(userId: string): Promise<void> {
         ':isActive': false,
         ':timestamp': timestamp
       }
-    };
+    });
 
-    await dynamoDB.update(params).promise();
+    await dynamoDB.send(command);
     
     // Clear cache entries
     const user = await findUserById(userId);

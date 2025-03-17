@@ -156,6 +156,7 @@ router.post('/login', authLimiter, async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const clientIp = req.ip;
+    const userAgent = req.headers['user-agent'];
 
     if (!email || !password) {
       logger.warn('Login attempt without email or password', { requestId, clientIp });
@@ -163,7 +164,7 @@ router.post('/login', authLimiter, async (req, res, next) => {
     }
 
     // Attempt login
-    const { user, token } = await loginWithPassword(email, password);
+    const { user, token } = await loginWithPassword(email, password, clientIp, userAgent);
     logger.info('User logged in successfully', { 
       requestId, 
       userId: user.userId,
