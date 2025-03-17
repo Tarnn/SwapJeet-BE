@@ -7,10 +7,10 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
+    "setup-db": "ts-node scripts/setup-db.ts",
     "test": "jest",
     "lint": "eslint . --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "setup-local-db": "ts-node scripts/setup-local-db.ts"
+    "format": "prettier --write \"src/**/*.ts\""
   },
   "keywords": [
     "ethereum",
