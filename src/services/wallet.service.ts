@@ -8,6 +8,7 @@ import { validateTag } from '../utils/validation';
 import { generateFumbleImage } from '../utils/image';
 import { logger } from '../config/logger';
 import { WalletDetails, ZapperPortfolioV2Response, TokenBalance, ZapperTokenNode } from '../types/wallet';
+import { ZapperClient, getWalletFumbles } from './zapper';
 
 const dynamoClient = new DynamoDBClient({
   region: process.env.AWS_REGION || 'local',
@@ -20,6 +21,7 @@ const dynamoClient = new DynamoDBClient({
 
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
+const zapperClient = new ZapperClient();
 
 const WALLETS_TABLE = process.env.WALLETS_TABLE || 'wallets';
 const CACHE_TTL = parseInt(process.env.CACHE_TTL || '900'); // 15 minutes
@@ -40,23 +42,20 @@ interface Wallet {
     timestamp: string;
     value: number;
   }[];
-  tokens?: any[];
+  tokens?: TokenBalance[];
 }
 
 interface FumbleResult {
-  transactions: {
-    hash: string;
+  transactions: Array<{
     token: string;
-    amount: number;
-    salePrice: number;
-    peakPrice: number;
     loss: number;
     type: 'Early' | 'Late';
     timestamp: string;
-  }[];
+    price: number;
+    peakPrice: number;
+  }>;
   totalLoss: number;
   jeetScore: number;
-  rank: number;
 }
 
 const ZAPPER_GRAPHQL_QUERY = `
@@ -107,8 +106,83 @@ const ZAPPER_PORTFOLIO_QUERY = `
   }
 `;
 
+const ZAPPER_TRANSACTIONS_QUERY = `
+  query TransactionsQuery(
+    $address: Address!,
+    $before: String,
+    $after: String,
+    $first: Int = 100
+  ) {
+    transactions(
+      address: $address,
+      before: $before,
+      after: $after,
+      first: $first
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        hash
+        type
+        timestamp
+        symbol
+        amount
+        amountUSD
+        token {
+          address
+          symbol
+          decimals
+          price
+        }
+        to {
+          address
+        }
+        from {
+          address
+        }
+      }
+    }
+  }
+`;
+
 interface GraphQLResponse {
   data: ZapperPortfolioV2Response;
+  errors?: Array<{ message: string }>;
+}
+
+export interface ZapperTransaction {
+  hash: string;
+  type: string;
+  timestamp: string;
+  symbol: string;
+  amount: string;
+  amountUSD: number;
+  token: {
+    address: string;
+    symbol: string;
+    decimals: number;
+    price: number;
+  };
+  to: {
+    address: string;
+  };
+  from: {
+    address: string;
+  };
+}
+
+interface ZapperTransactionsResponse {
+  data?: {
+    transactions?: {
+      pageInfo: {
+        hasNextPage: boolean;
+        endCursor: string | null;
+      };
+      nodes: ZapperTransaction[];
+    };
+  };
   errors?: Array<{ message: string }>;
 }
 
@@ -121,44 +195,14 @@ export const addWallet = async (
 
     // Validate wallet exists on Zapper
     try {
-      logger.debug('Fetching wallet data from Zapper', { address: input.address });
+      const portfolio = await zapperClient.getPortfolio([input.address]);
       
-      const zapperResponse = await axios({
-        url: 'https://public.zapper.xyz/graphql',
-        method: 'post',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-zapper-api-key': process.env.ZAPPER_API_KEY
-        },
-        data: {
-          query: ZAPPER_GRAPHQL_QUERY,
-          variables: {
-            addresses: [input.address],
-            networks: ['ETHEREUM_MAINNET']
-          }
-        }
-      });
-
-      logger.debug('Zapper API response', { 
-        status: zapperResponse.status,
-        hasData: !!zapperResponse.data,
-        data: zapperResponse.data
-      });
-
-      if (zapperResponse.data.errors) {
-        logger.error('GraphQL Errors', { errors: zapperResponse.data.errors });
-        throw new Error(`GraphQL Errors: ${JSON.stringify(zapperResponse.data.errors)}`);
-      }
-
-      const portfolio = zapperResponse.data.data.portfolio;
-      if (!portfolio || !portfolio.tokenBalances || portfolio.tokenBalances.length === 0) {
+      if (!portfolio.portfolioV2?.tokenBalances) {
         throw new AppError(400, 'Invalid or empty wallet');
       }
 
-      // Calculate total balance across all tokens
-      const totalBalance = portfolio.tokenBalances.reduce((sum: number, balance: any) => {
-        return sum + (balance.token.balanceUSD || 0);
-      }, 0);
+      // Calculate total balance
+      const totalBalance = portfolio.portfolioV2.tokenBalances.totalBalanceUSD || 0;
 
       if (!validateTag(input.tag)) {
         throw new AppError(400, 'Invalid tag');
@@ -296,49 +340,18 @@ export const getWalletDetails = async (address: string, refresh: boolean = false
   try {
     logger.debug('Fetching wallet details from Zapper', { address, refresh });
     
-    const encodedKey = Buffer.from(process.env.ZAPPER_API_KEY || '').toString('base64');
+    const portfolio = await zapperClient.getPortfolio([address]);
     
-    const zapperResponse = await axios({
-      url: 'https://public.zapper.xyz/graphql',
-      method: 'post',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${encodedKey}`
-      },
-      data: {
-        query: ZAPPER_PORTFOLIO_QUERY,
-        variables: {
-          addresses: [address],
-          first: 100 // Get first 100 tokens
-        }
-      }
-    }) as AxiosResponse<GraphQLResponse>;
-
-    logger.debug('Zapper API raw response', {
-      status: zapperResponse.status,
-      statusText: zapperResponse.statusText,
-      data: zapperResponse.data
-    });
-
-    if (zapperResponse.data.errors) {
-      logger.error('GraphQL Errors from Zapper', { 
-        errors: zapperResponse.data.errors,
-        address 
-      });
-      throw new Error(`GraphQL Errors: ${JSON.stringify(zapperResponse.data.errors)}`);
-    }
-
-    const portfolio = zapperResponse.data?.data?.portfolioV2;
-    if (!portfolio?.tokenBalances) {
+    if (!portfolio.portfolioV2?.tokenBalances) {
       logger.error('Invalid Zapper response structure', { 
-        responseData: zapperResponse.data,
+        portfolio,
         address 
       });
       throw new AppError(400, 'Invalid or empty wallet');
     }
 
     // Process token balances
-    const tokens: TokenBalance[] = portfolio.tokenBalances.byToken.edges.map(({ node }: { node: ZapperTokenNode }) => ({
+    const tokens: TokenBalance[] = portfolio.portfolioV2.tokenBalances.byToken.edges.map(({ node }) => ({
       network: node.network.name,
       balance: parseFloat(node.balance) || 0,
       balanceUSD: node.balanceUSD || 0,
@@ -348,11 +361,11 @@ export const getWalletDetails = async (address: string, refresh: boolean = false
         decimals: node.decimals,
         price: node.price || 0,
         address: node.tokenAddress,
-        imgUrl: node.imgUrlV2
+        imgUrl: node.imgUrlV2 || null
       }
     }));
 
-    const netWorth = portfolio.tokenBalances.totalBalanceUSD || 0;
+    const netWorth = portfolio.portfolioV2.tokenBalances.totalBalanceUSD || 0;
 
     // Sort tokens by USD value for top holdings
     const sortedTokens = [...tokens].sort((a, b) => (b.balanceUSD || 0) - (a.balanceUSD || 0));
@@ -363,7 +376,7 @@ export const getWalletDetails = async (address: string, refresh: boolean = false
       tokens,
       netWorth,
       topHoldings: topTokens,
-      tokenCount: portfolio.tokenBalances.byToken.totalCount || tokens.length,
+      tokenCount: portfolio.portfolioV2.tokenBalances.byToken.totalCount || tokens.length,
       lastUpdated: new Date().toISOString()
     };
 
@@ -388,63 +401,7 @@ export const getWalletDetails = async (address: string, refresh: boolean = false
   }
 };
 
-export const getWalletFumbles = async (address: string): Promise<FumbleResult> => {
-  const cacheKey = `wallet_fumbles_${address}`;
-  const cached = walletCache.get<FumbleResult>(cacheKey);
-  
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    // Get transactions from Zapper
-    const zapperResponse = await axios.get(
-      `https://api.zapper.fi/v1/transactions?address=${address}`,
-      {
-        headers: {
-          'Authorization': `Basic ${process.env.ZAPPER_API_KEY}`
-        }
-      }
-    );
-
-    // Process transactions and calculate fumbles
-    const transactions = zapperResponse.data
-      .filter((tx: any) => tx.type === 'sell' || tx.type === 'swap')
-      .map(async (tx: any) => {
-        const salePrice = await getPriceAtTimestamp(tx.token.id, tx.timestamp);
-        const peakPrice = await getPeakPrice(tx.token.id, tx.timestamp);
-        const loss = (peakPrice - salePrice) * tx.amount;
-
-        return {
-          hash: tx.hash,
-          token: tx.token.symbol,
-          amount: tx.amount,
-          salePrice,
-          peakPrice,
-          loss: loss > 0 ? loss : 0,
-          type: peakPrice > salePrice ? 'Early' : 'Late',
-          timestamp: tx.timestamp
-        };
-      });
-
-    const processedTransactions = await Promise.all(transactions);
-    const totalLoss = processedTransactions.reduce((sum, tx) => sum + tx.loss, 0);
-    const maxPossible = processedTransactions.reduce((sum, tx) => sum + (tx.peakPrice * tx.amount), 0);
-    const jeetScore = Math.round((totalLoss / maxPossible) * 100);
-
-    const result: FumbleResult = {
-      transactions: processedTransactions,
-      totalLoss,
-      jeetScore,
-      rank: calculateRank(jeetScore)
-    };
-
-    walletCache.set(cacheKey, result);
-    return result;
-  } catch (error) {
-    throw new AppError(500, 'Failed to calculate fumbles');
-  }
-};
+export { getWalletFumbles } from './zapper';
 
 export const exportFumbles = async (userId: string, address: string): Promise<string> => {
   try {

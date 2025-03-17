@@ -11,7 +11,14 @@ export interface TokenBalance {
   network: string;
   balance: number;
   balanceUSD: number;
-  token: Token;
+  token: {
+    name: string;
+    symbol: string;
+    decimals: number;
+    price: number;
+    address: string;
+    imgUrl: string | null;
+  };
 }
 
 export interface WalletDetails {
@@ -21,6 +28,20 @@ export interface WalletDetails {
   topHoldings: TokenBalance[];
   tokenCount: number;
   lastUpdated: string;
+}
+
+export interface Wallet {
+  userId: string;
+  address: string;
+  nickname?: string;
+  tag: string;
+  addedAt: string;
+  isPinned: boolean;
+  netWorthHistory: {
+    timestamp: string;
+    value: number;
+  }[];
+  tokens?: TokenBalance[];
 }
 
 // Zapper API Response Types

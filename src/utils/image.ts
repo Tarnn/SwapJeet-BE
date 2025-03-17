@@ -1,3 +1,7 @@
+import { createCanvas, loadImage } from 'canvas';
+import { FumbleResult } from '../services/zapper';
+import { Wallet } from '../types/wallet';
+
 // Score card interfaces and types
 interface FumbleResult {
   transactions: {
@@ -39,36 +43,44 @@ interface ScoreCard {
 }
 
 export async function generateFumbleImage(fumbles: FumbleResult, wallet: Wallet): Promise<Buffer> {
-  const scoreCard: ScoreCard = {
-    wallet: {
-      displayName: wallet.nickname || `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`,
-      address: wallet.address
-    },
-    score: {
-      value: fumbles.jeetScore,
-      rank: getRankText(fumbles.rank),
-      rankColor: getRankColor(fumbles.rank)
-    },
-    topFumbles: fumbles.transactions
-      .sort((a, b) => b.loss - a.loss)
-      .slice(0, 3)
-      .map(fumble => ({
-        token: fumble.token,
-        amount: fumble.amount,
-        loss: fumble.loss,
-        type: `Sold ${fumble.type}`
-      })),
-    metadata: {
-      timestamp: new Date().toISOString(),
-      version: '1.0.0'
-    }
-  };
+  // Create canvas
+  const canvas = createCanvas(800, 600);
+  const ctx = canvas.getContext('2d');
 
-  // Convert the score card to a JSON string with formatting
-  const jsonString = JSON.stringify(scoreCard, null, 2);
-  
-  // Return the JSON as a buffer
-  return Buffer.from(jsonString);
+  // Set background
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, 800, 600);
+
+  // Draw title
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 24px Arial';
+  ctx.fillText(`Wallet Fumbles - ${wallet.nickname || wallet.address}`, 40, 40);
+
+  // Draw jeet score
+  ctx.font = 'bold 36px Arial';
+  ctx.fillStyle = '#ff4444';
+  ctx.fillText(`Jeet Score: ${fumbles.jeetScore}`, 40, 100);
+
+  // Draw total loss
+  ctx.font = '20px Arial';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(`Total Loss: $${fumbles.totalLoss.toLocaleString()}`, 40, 140);
+
+  // Draw transactions
+  let y = 200;
+  fumbles.transactions.forEach((tx, i) => {
+    if (i < 5) { // Show top 5 fumbles
+      ctx.font = '16px Arial';
+      ctx.fillStyle = '#cccccc';
+      ctx.fillText(`${tx.token} - ${new Date(tx.timestamp).toLocaleDateString()}`, 40, y);
+      ctx.fillText(`Loss: $${tx.loss.toLocaleString()}`, 40, y + 20);
+      ctx.fillText(`Sold at $${tx.price.toLocaleString()} - Peak: $${tx.peakPrice.toLocaleString()}`, 40, y + 40);
+      y += 80;
+    }
+  });
+
+  // Return buffer
+  return canvas.toBuffer('image/png');
 }
 
 function getRankText(rank: number): string {
