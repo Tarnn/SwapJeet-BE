@@ -1,13 +1,13 @@
 {
   "info": {
     "name": "SwapJeet API",
-    "description": "API for tracking Ethereum wallet fumbles and managing leaderboards",
+    "description": "Collection for SwapJeet API endpoints",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:3000/api",
+      "value": "http://localhost:3000",
       "type": "string"
     }
   ],
@@ -32,6 +32,132 @@
     ]
   },
   "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "API Documentation",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api-docs",
+          "host": ["{{baseUrl}}"],
+          "path": ["api-docs"]
+        }
+      }
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-save auth token and user ID from login responses",
+                  "if (pm.response.code === 200) {",
+                  "    // Extract auth token from cookies",
+                  "    const cookies = pm.response.headers.get('set-cookie');",
+                  "    if (cookies) {",
+                  "        const authMatch = cookies.match(/swapjeet_token=([^;]+)/);",
+                  "        if (authMatch && authMatch[1]) {",
+                  "            pm.environment.set('authToken', authMatch[1]);",
+                  "            console.log('Auth token saved');",
+                  "        }",
+                  "    }",
+                  "",
+                  "    // Extract user ID from response body",
+                  "    try {",
+                  "        const responseData = pm.response.json();",
+                  "        if (responseData.userId) {",
+                  "            pm.environment.set('userId', responseData.userId);",
+                  "            console.log('User ID saved:', responseData.userId);",
+                  "        }",
+                  "    } catch (e) {",
+                  "        console.error('Failed to parse response JSON:', e);",
+                  "    }",
+                  "}",
+                  "",
+                  "// Log any errors",
+                  "if (pm.response.code >= 400) {",
+                  "    console.error('Authentication request failed:', pm.response.code);",
+                  "    try {",
+                  "        console.error('Error details:', pm.response.json());",
+                  "    } catch (e) {",
+                  "        console.error('Response body:', pm.response.text());",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"{{email}}\",\n    \"password\": \"{{password}}\",\n    \"name\": \"{{name}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Auto-save auth token and user ID from login responses",
+              "pm.test(\"Save authentication data\", () => {",
+              "    if (pm.response.code === 200) {",
+              "        const cookies = pm.response.headers.get('set-cookie');",
+              "        if (cookies) {",
+              "            const authMatch = cookies.match(/auth_token=([^;]+)/);",
+              "            if (authMatch && authMatch[1]) {",
+              "                pm.environment.set('authToken', authMatch[1]);",
+              "                console.log('Auth token saved');",
+              "            }",
+              "        }",
+              "",
+              "        const responseData = pm.response.json();",
+              "        if (responseData.userId) {",
+              "            pm.environment.set('userId', responseData.userId);",
+              "            console.log('User ID saved:', responseData.userId);",
+              "        }",
+              "    }",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
     {
       "name": "Authentication",
       "item": [
@@ -187,6 +313,24 @@
     },
     {
       "name": "Wallets",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Ensure auth token and CSRF token are present",
+              "if (!pm.environment.get('authToken')) {",
+              "    console.error('Missing auth token. Please login first.');",
+              "}",
+              "",
+              "if (!pm.environment.get('csrfToken')) {",
+              "    console.error('Missing CSRF token. Please check if the server is running.');",
+              "}"
+            ]
+          }
+        }
+      ],
       "item": [
         {
           "name": "Get User's Wallets",
@@ -390,6 +534,34 @@
           }
         }
       ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Automatically get CSRF token from health endpoint if not present",
+          "if (!pm.environment.get('csrfToken')) {",
+          "    pm.sendRequest({",
+          "        url: pm.environment.get('baseUrl') + '/health',",
+          "        method: 'GET'",
+          "    }, function (err, res) {",
+          "        if (!err) {",
+          "            const cookies = res.headers.get('set-cookie');",
+          "            if (cookies) {",
+          "                const csrfMatch = cookies.match(/XSRF-TOKEN=([^;]+)/);",
+          "                if (csrfMatch && csrfMatch[1]) {",
+          "                    pm.environment.set('csrfToken', csrfMatch[1]);",
+          "                    console.log('CSRF token set:', csrfMatch[1]);",
+          "                }",
+          "            }",
+          "        }",
+          "    });",
+          "}"
+        ]
+      }
     }
   ]
 } 
