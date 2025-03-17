@@ -517,6 +517,37 @@
             },
             "description": "Generate a shareable PNG image of fumble analysis"
           }
+        },
+        {
+          "name": "Get Wallets",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ensure we have a CSRF token",
+                  "if (!pm.environment.get('csrfToken')) {",
+                  "    throw new Error('No CSRF token found. Please run the Health check first.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/wallets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "wallets"]
+            }
+          }
         }
       ]
     },

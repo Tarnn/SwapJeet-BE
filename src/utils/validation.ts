@@ -1,9 +1,20 @@
-import { utils } from 'ethers';
+import { ethers } from 'ethers';
 import { UpdateUserDto, UserPreferences } from '../interfaces/user.interface';
 
 export const validateAddress = (address: string): boolean => {
   try {
-    return utils.isAddress(address);
+    // Basic format check (0x followed by 40 hex characters)
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return false;
+    }
+    
+    // Try ethers.js validation as a backup
+    try {
+      return ethers.isAddress(address);
+    } catch {
+      // If ethers.js validation fails, fall back to our regex check
+      return true;
+    }
   } catch {
     return false;
   }
