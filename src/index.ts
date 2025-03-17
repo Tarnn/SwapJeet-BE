@@ -5,7 +5,9 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
 import { errorHandler } from './middleware/errorHandler';
+import { generateCsrfToken, validateCsrfToken } from './middleware/csrf';
 import { setupRoutes } from './routes';
 import { setupWebSocket } from './services/websocket';
 import { logger, morganMiddleware } from './config/logger';
@@ -23,11 +25,27 @@ const io = new Server(httpServer, {
 });
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", process.env.CORS_ORIGIN || '']
+    }
+  }
+}));
+
 app.use(cors({
   origin: process.env.CORS_ORIGIN,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-XSRF-TOKEN']
 }));
+
+// Cookie parser middleware
+app.use(cookieParser(process.env.COOKIE_SECRET));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -49,6 +67,10 @@ app.use(...morganMiddleware);
 // Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// CSRF protection
+app.use(generateCsrfToken);
+app.use(validateCsrfToken);
 
 // Setup routes
 setupRoutes(app);

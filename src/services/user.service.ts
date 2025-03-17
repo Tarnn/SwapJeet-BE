@@ -1,129 +1,256 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDB } from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
+import { logger } from '../config/logger';
 import { AppError } from '../middleware/errorHandler';
+import { User, CreateUserDto, UpdateUserDto, UserRole, UserAction, SecuritySettings } from '../interfaces/user.interface';
+import { logUserActivity } from './activity.service';
+import NodeCache from 'node-cache';
 
-const client = new DynamoDBClient({
-  region: process.env.AWS_REGION
-});
+const dynamoDB = new DynamoDB.DocumentClient();
+const userCache = new NodeCache({ stdTTL: 3600 }); // Cache for 1 hour
 
-const docClient = DynamoDBDocumentClient.from(client);
-const TABLE_NAME = `${process.env.DYNAMODB_TABLE_PREFIX}users`;
+const TABLE_NAME = process.env.USERS_TABLE || 'users';
 
-interface User {
-  userId: string;
-  email: string;
-  googleId: string;
-  nickname?: string;
-  theme?: string;
-  createdAt: string;
-  prefs?: {
-    showLeaderboard: boolean;
-    walletOrder: string[];
-    hideSmall: boolean;
-    fumbleTheme: string;
-  };
-}
-
-interface CreateUserInput {
-  email: string;
-  googleId: string;
-  createdAt: string;
-  nickname?: string;
-}
-
-export const createUser = async (input: CreateUserInput): Promise<User> => {
-  const userId = uuidv4();
-  const user: User = {
-    userId,
-    email: input.email,
-    googleId: input.googleId,
-    nickname: input.nickname,
-    createdAt: input.createdAt,
-    prefs: {
-      showLeaderboard: true,
-      walletOrder: [],
-      hideSmall: false,
-      fumbleTheme: 'default'
-    }
-  };
-
-  try {
-    await docClient.send(new PutCommand({
-      TableName: TABLE_NAME,
-      Item: user,
-      ConditionExpression: 'attribute_not_exists(email)'
-    }));
-
-    return user;
-  } catch (error) {
-    throw new AppError(500, 'Failed to create user');
+export async function findUserByEmail(email: string): Promise<User | null> {
+  const cacheKey = `user:${email}`;
+  const cachedUser = userCache.get<User>(cacheKey);
+  
+  if (cachedUser) {
+    logger.debug('User found in cache', { email });
+    return cachedUser;
   }
-};
 
-export const findUserByEmail = async (email: string): Promise<User | null> => {
   try {
-    const result = await docClient.send(new QueryCommand({
+    const params = {
       TableName: TABLE_NAME,
       IndexName: 'EmailIndex',
       KeyConditionExpression: 'email = :email',
       ExpressionAttributeValues: {
         ':email': email
       }
-    }));
+    };
 
-    return result.Items?.[0] as User || null;
+    const result = await dynamoDB.query(params).promise();
+    
+    if (!result.Items || result.Items.length === 0) {
+      logger.debug('User not found', { email });
+      return null;
+    }
+
+    const user = result.Items[0] as User;
+    userCache.set(cacheKey, user);
+    logger.debug('User found and cached', { email });
+    
+    return user;
   } catch (error) {
-    throw new AppError(500, 'Failed to find user');
+    logger.error('Error finding user by email', { 
+      email, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    throw new AppError(500, 'Error finding user');
   }
-};
+}
 
-export const findUserById = async (userId: string): Promise<User | null> => {
+export async function findUserById(userId: string): Promise<User | null> {
+  const cacheKey = `user:id:${userId}`;
+  const cachedUser = userCache.get<User>(cacheKey);
+  
+  if (cachedUser) {
+    logger.debug('User found in cache', { userId });
+    return cachedUser;
+  }
+
   try {
-    const result = await docClient.send(new GetCommand({
+    const params = {
       TableName: TABLE_NAME,
       Key: {
         userId
       }
-    }));
+    };
 
-    return result.Item as User || null;
+    const result = await dynamoDB.get(params).promise();
+    
+    if (!result.Item) {
+      logger.debug('User not found', { userId });
+      return null;
+    }
+
+    const user = result.Item as User;
+    userCache.set(cacheKey, user);
+    logger.debug('User found and cached', { userId });
+    
+    return user;
   } catch (error) {
-    throw new AppError(500, 'Failed to find user');
+    logger.error('Error finding user by ID', { 
+      userId, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    throw new AppError(500, 'Error finding user');
   }
-};
+}
 
-export const updateUserPreferences = async (
-  userId: string,
-  prefs: Partial<User['prefs']>
-): Promise<User> => {
+export async function createUser(userData: CreateUserDto): Promise<User> {
+  try {
+    const userId = uuidv4();
+    const timestamp = new Date().toISOString();
+    
+    const user: User = {
+      userId,
+      ...userData,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isActive: true,
+      role: UserRole.USER,
+      failedLoginAttempts: 0,
+      preferences: {
+        emailNotifications: true,
+        theme: 'light',
+        language: 'en'
+      }
+    };
+
+    const params = {
+      TableName: TABLE_NAME,
+      Item: user,
+      ConditionExpression: 'attribute_not_exists(email)'
+    };
+
+    await dynamoDB.put(params).promise();
+    
+    logger.info('User created successfully', { 
+      userId,
+      email: userData.email 
+    });
+
+    await logUserActivity({
+      userId,
+      action: UserAction.ACCOUNT_CREATED,
+      timestamp,
+      details: {
+        method: userData.googleId ? 'GOOGLE' : 'EMAIL'
+      }
+    });
+
+    return user;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'ConditionalCheckFailedException') {
+      logger.warn('Attempt to create duplicate user', { email: userData.email });
+      throw new AppError(409, 'User with this email already exists');
+    }
+
+    logger.error('Error creating user', { 
+      error: error instanceof Error ? error.message : 'Unknown error',
+      userData 
+    });
+    throw new AppError(500, 'Error creating user');
+  }
+}
+
+export async function updateUser(userId: string, updates: UpdateUserDto): Promise<User> {
   try {
     const user = await findUserById(userId);
     if (!user) {
       throw new AppError(404, 'User not found');
     }
 
-    const updatedPrefs = {
-      ...user.prefs,
-      ...prefs
-    };
-
-    await docClient.send(new PutCommand({
-      TableName: TABLE_NAME,
-      Item: {
-        ...user,
-        prefs: updatedPrefs
-      }
-    }));
-
-    return {
-      ...user,
-      prefs: updatedPrefs
-    };
-  } catch (error) {
-    if (error instanceof AppError) {
-      throw error;
+    const timestamp = new Date().toISOString();
+    
+    // Handle security settings update
+    let securitySettings: SecuritySettings | undefined = user.securitySettings;
+    if (updates.securitySettings) {
+      securitySettings = {
+        twoFactorEnabled: updates.securitySettings.twoFactorEnabled ?? user.securitySettings?.twoFactorEnabled ?? false,
+        twoFactorSecret: updates.securitySettings.twoFactorSecret ?? user.securitySettings?.twoFactorSecret,
+        backupCodes: updates.securitySettings.backupCodes ?? user.securitySettings?.backupCodes,
+        trustedDevices: updates.securitySettings.trustedDevices ?? user.securitySettings?.trustedDevices ?? []
+      };
     }
-    throw new AppError(500, 'Failed to update user preferences');
+
+    const updatedUser: User = {
+      ...user,
+      ...updates,
+      updatedAt: timestamp,
+      preferences: {
+        ...user.preferences,
+        ...(updates.preferences || {})
+      },
+      securitySettings
+    };
+
+    const params = {
+      TableName: TABLE_NAME,
+      Item: updatedUser,
+      ConditionExpression: 'attribute_exists(userId)'
+    };
+
+    await dynamoDB.put(params).promise();
+    
+    // Clear cache entries
+    userCache.del(`user:id:${userId}`);
+    if (user.email) userCache.del(`user:${user.email}`);
+    
+    logger.info('User updated successfully', { 
+      userId,
+      updates: Object.keys(updates)
+    });
+
+    await logUserActivity({
+      userId,
+      action: UserAction.PROFILE_UPDATED,
+      timestamp,
+      details: {
+        updatedFields: Object.keys(updates)
+      }
+    });
+
+    return updatedUser;
+  } catch (error) {
+    logger.error('Error updating user', { 
+      userId,
+      updates,
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    throw new AppError(500, 'Error updating user');
   }
-}; 
+}
+
+export async function deactivateUser(userId: string): Promise<void> {
+  try {
+    const timestamp = new Date().toISOString();
+    
+    const params = {
+      TableName: TABLE_NAME,
+      Key: { userId },
+      UpdateExpression: 'SET isActive = :isActive, deactivatedAt = :timestamp, updatedAt = :timestamp',
+      ConditionExpression: 'attribute_exists(userId)',
+      ExpressionAttributeValues: {
+        ':isActive': false,
+        ':timestamp': timestamp
+      }
+    };
+
+    await dynamoDB.update(params).promise();
+    
+    // Clear cache entries
+    const user = await findUserById(userId);
+    userCache.del(`user:id:${userId}`);
+    if (user?.email) userCache.del(`user:${user.email}`);
+    
+    logger.info('User deactivated successfully', { userId });
+
+    await logUserActivity({
+      userId,
+      action: UserAction.ACCOUNT_DEACTIVATED,
+      timestamp,
+      details: {
+        deactivatedAt: timestamp
+      }
+    });
+  } catch (error) {
+    logger.error('Error deactivating user', { 
+      userId,
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    throw new AppError(500, 'Error deactivating user');
+  }
+} 

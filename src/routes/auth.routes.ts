@@ -2,8 +2,10 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyGoogleToken, generateToken } from '../utils/auth';
 import { createUser, findUserByEmail } from '../services/user.service';
+import { loginWithPassword, setPassword, generatePasswordResetToken, resetPassword } from '../services/auth.service';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
+import { validatePassword } from '../utils/validation';
 
 const router = Router();
 
